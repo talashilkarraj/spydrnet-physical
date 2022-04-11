@@ -5,10 +5,10 @@ import xml.etree.ElementTree as ET
 import random
 import spydrnet as sdn
 from spydrnet_physical.ir.element import Element
-from  spydrnet_physical.util import fpga_grid_gen, OpenFPGA_Arch, FPGAGridGen
+from spydrnet_physical.util import FPGAGridGen, OpenFPGA_Arch, FPGAGridGen
 
 
-class FpgaGridGen(unittest.TestCase):
+class TestFpgaGridGen(unittest.TestCase):
     def setUp(self):
         self.design_name = "example_design"
         self.openfpga_arch = '''
@@ -44,59 +44,58 @@ class FpgaGridGen(unittest.TestCase):
 
         self.vpr_arch_et = ET.fromstring(self.vpr_arch)
         self.ofpga_et = ET.fromstring(self.openfpga_arch)
-        self.fpga_arch = OpenFPGA_Arch(self.vpr_arch_et, self.ofpga_et, "basicLayout")
-        self.fpga_grid_gen = FPGAGridGen(self.design_name, "./_fpga_grid_gen_arch.xml", "basicLayout", "./")
+        self.fpga_arch = OpenFPGA_Arch(
+            self.vpr_arch_et, self.ofpga_et, "basicLayout")
+        self.vprArchTree = ET.ElementTree(
+            ET.fromstring(self.vpr_arch)).getroot()
+        # self.fpga_grid_gen = FPGAGridGen(
+        #     self.design_name, "./_fpga_grid_gen_arch.xml", "basicLayout", "./")
         self.layout_str = "basicLayout"
         self.element = Element()
-        
+
     def test_init(self):
-        tiles = {"io_top": (1, 1),   
-                "io_right": (1, 1),
-                "io_bottom": (1, 1),
-                "io_left": (1, 1),
-                "clb": (1, 1),
-                "dsp":(2, 1),
-                "ram9k":(1, 1),
-                "EMPTY":(1,1)}
-        self.assertDictEqual(self.fpga_arch.tiles, tiles)
+        '''
+        Check self.fpga_arch is instance of OpenFPGA_Arch
+        Check self.width, self.height of the object
+        Check self.grid has a correct width and height
+        '''
+
+        grid_gen = FPGAGridGen("myDesign", self.vprArchTree, 'basicLayout', "")
+
+        self.assertIsInstance(grid_gen.fpga_arch, OpenFPGA_Arch)
+        self.assertIs(grid_gen.width, 16)
+        self.assertIs(grid_gen.height, 20)
+        self.assertIs(len(grid_gen.grid), 20)
+        self.assertIs(len(grid_gen.grid[0]), 16)
+
+        self.assertIs(grid_gen.get_width(), 14, "Width property is invalid")
+        self.assertIs(grid_gen.get_height(), 18, "Height property is invalid")
 
     def test_get_blocks(self):
-        _width = self.fpga_grid_gen.get_width()
-        _height = self.fpga_grid_gen.get_height()
-        _x, _y = random.randint(0, _width), random.randint(0, _height) 
-        
-        get_block_return = (0, _x , _y)
-        self.assertTupleEqual(self.fpga_grid_gen.get_block(_x,_y), get_block_return)
+        '''
+        Check return values for differnt grids 
+        '''
+        grid_gen = FPGAGridGen("myDesign", self.vprArchTree, 'basicLayout', "")
+        grid_gen.grid = list(reversed([
+            ['alb', 'blb'],
+            ['clb', 'dlb']
+        ]))
+        self.assertTupleEqual(grid_gen.get_block(0, 0), ("clb", 0, 0))
+        self.assertTupleEqual(grid_gen.get_block(1, 1), ("blb", 1, 1))
 
-    def test_add_fill(self):
-        _width = self.fpga_grid_gen.get_width()
-        _height = self.fpga_grid_gen.get_height()
-        self.fpga_grid_gen.add_fill(self.element)
-        for [x,y] in random.randint(0,_width), random.randint(0,_height):
-            self.assertEqual(self.fpga_grid_gen.get_block(x,y) ,[x,y])
+        grid_gen.grid = list(reversed([
+            ['alb', grid_gen.UP_ARROW],
+            ['clb', 'dlb']
+        ]))
+        self.assertTupleEqual(grid_gen.get_block(1, 0), ("dlb", 1, 0))
+        self.assertTupleEqual(grid_gen.get_block(1, 1), ("dlb", 1, 0))
 
-    def test_add_corner(self):
-        self.arch_tree = ET.parse("./_fpga_grid_gen_arch.xml")
-        self.root = self.arch_tree.getroot()
-        self.layout = self.root.find(f".//fixed_layout[@name='{self.layout_str}']")
-        # for element in sorted(self.layout, key=lambda x: int(x.attrib["priority"])):
-        #     if element.tag.lower()=='io_top':
-        #         self.ele_type = element.attrib["type"].lower()
-        # # self.ele_type = self.ele.attrib['type']
-        # # self.fpga_grid_gen.layout
-        # self.fpga_grid_gen.add_corners(self.ele_type)
-        # self.assertEqual(self.fpga_grid_gen.get_block(0,0), (1,0,0))
-
-    # workinprogress
-    def test_add_col(self):
-        assert(True) 
-
-    def test_add_region(self):
-        assert(True) 
-
-    # def test_enumerate_grid(self):
-    #     list2=[
-    #         []
-    #     ]
-    #     assert(True)
-        # self.assertListEqual(self.fpga_grid_gen.enumerate_grid(), list2)
+        grid_gen.grid = list(reversed([
+            ['alb',             'blb', "mlb"],
+            [grid_gen.UP_ARROW, grid_gen.UP_ARROW, 'mlb'],
+            ['clb',             grid_gen.RIGHT_ARROW, 'mlb']
+        ]))
+        self.assertTupleEqual(grid_gen.get_block(0, 0), ("clb", 0, 0))
+        self.assertTupleEqual(grid_gen.get_block(1, 0), ("clb", 0, 0))
+        self.assertTupleEqual(grid_gen.get_block(0, 1), ("clb", 0, 0))
+        self.assertTupleEqual(grid_gen.get_block(1, 1), ("clb", 0, 0))

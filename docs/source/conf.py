@@ -17,6 +17,7 @@ import os
 import sys
 import pathlib
 sys.path.insert(0, os.path.abspath('../..'))  # nopep8
+sys.path.insert(0, os.path.abspath('../../spydrnet_physical'))  # nopep8
 import spydrnet as sdn
 import spydrnet_physical as sdnphy
 from sphinx_gallery.sorting import ExplicitOrder
@@ -57,6 +58,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.todo',
     'sphinx.ext.viewcode',
+    'sphinx.ext.graphviz',
     'sphinx.ext.githubpages',
     'sphinxcontrib_hdl_diagrams',
     'sphinx_gallery.gen_gallery',
@@ -65,6 +67,8 @@ extensions = [
 
 # generate autosummary pages
 autosummary_generate = True
+
+graphviz_output_format = "svg"
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -121,6 +125,9 @@ html_css_files = [
 # documentation.
 #
 # html_theme_options = {}
+html_theme_options = {
+    "navigation_with_keys": True,
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -267,6 +274,8 @@ def CollectRst():
                 # print()
                 with open(os.path.join(out_dir, basename+".rst"), "w") as fp:
                     fp.write(
+                        f'.. _sample_verilog_{basename.replace(" ","_")}:\n' +
+                        f'\n' +
                         f'{basename}\n' +
                         f'=================\n\n' +
                         f'.. hdl-diagram:: ../{filename}\n' +

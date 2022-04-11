@@ -10,6 +10,8 @@ import spydrnet as sdn
 import svgwrite
 from spydrnet_physical.util import ConnectPoint
 from svgwrite.container import Group
+from collections import OrderedDict
+
 
 DEFAULT_COLOR = " black"
 
@@ -102,6 +104,12 @@ class ConnectPointList:
         if isinstance(point, tuple):
             point = self.search_from_point(point)
         point.level = "up"
+        return point
+
+    def make_top_connection(self, point):
+        if isinstance(point, tuple):
+            point = self.search_from_point(point)
+        point.level = "top"
         return point
 
     def reset_level(self, point):
@@ -287,6 +295,7 @@ class ConnectPointList:
                 .gridLabels{fill: grey;font-style: italic;font-weight: 900}
                 .down{stroke-dasharray: 5;}
                 .up{stroke-dasharray: 5;}
+                .top{stroke-dasharray: 5;}
                 .gridmarker{stroke:red; stroke-width:0.2; opacity: 0.7;}
                 """))
         DRMarker = dwg.marker(refX="30", refY="30",
@@ -335,6 +344,38 @@ class ConnectPointList:
         '''
         return "PlaceholderModule"
 
+    def print_port_stat(self, netlist, filename=None):
+        '''
+        This print ports generation statistics
+        '''
+        stat = self.show_stats(netlist)
+        output = []
+        format_str = "{:15s} | {:>3} {:>3} {:>3} {:>3} | {:>3} {:>3} {:>3} {:>3}"
+        default = {
+            "left": 0, "right": 0, "top": 0, "bottom": 0
+        }
+        output.append("= "*26)
+        output.append("{:15s} | {:^15} | {:^15}".format('Module', "In", "Out"))
+        output.append(format_str.format('Module',
+                                        "L", "R", "T", "B",
+                                        "L", "R", "T", "B"))
+        output.append("= "*26)
+        for module, mstat in stat.items():
+            output.append(format_str.format(
+                module,
+                mstat.get("in", default)["left"] or '-',
+                mstat.get("in", default)["right"] or '-',
+                mstat.get("in", default)["top"] or '-',
+                mstat.get("in", default)["bottom"] or '-',
+                mstat.get("out", default)["left"] or '-',
+                mstat.get("out", default)["right"] or '-',
+                mstat.get("out", default)["top"] or '-',
+                mstat.get("out", default)["bottom"] or '-'))
+        if filename:
+            with open(filename, "w") as fp:
+                fp.write("\n".join(output))
+        return output
+
     def show_stats(self, netlist):
         '''
         Extracts the connectivity statistics for port and connection creation
@@ -348,14 +389,14 @@ class ConnectPointList:
                 mstat[from_conn]["out"] = mstat[from_conn].get(
                     "out", {"left": 0, "right": 0, "top": 0, "bottom": 0})
                 mstat[from_conn]["out"][point.direction(reverse=True)] += 1
-            if point.level in ["same", "up"]:
+            if point.level in ["same", "up", "top"]:
                 to_conn = self.get_reference(netlist, *point.to_connection)
                 mstat[to_conn] = mstat.get(to_conn, {})
                 mstat[to_conn]["in"] = mstat[to_conn].get(
                     "in", {"left": 0, "right": 0, "top": 0, "bottom": 0})
                 mstat[to_conn]["in"][point.direction(reverse=False)] += 1
 
-        return mstat
+        return OrderedDict((module, mstat[module]) for module in sorted(mstat))
 
     def create_ft_ports(self, netlist: sdn.Netlist, port_name: str, cable: sdn.Cable):
         '''
@@ -369,11 +410,14 @@ class ConnectPointList:
         for m_name, values in self.show_stats(netlist).items():
             if m_name == "top":
                 continue
+            # Get current module
             module: sdn.Definition = next(netlist.get_definitions(m_name))
+            # Get the signal port if it exist in the cirrect module
             port: sdn.Port = next(module.get_ports(port_name), None)
 
             # Create input ports on the module
             prev_cable = None
+            # rotate anti-clockwise and create input connections
             for inp in [k for k, v in values.get("in", {}).items() if v > 0]:
                 module.create_port(f"{port_name}_{inp}_in",
                                    pins=cable.size, direction=sdn.IN)
@@ -382,25 +426,31 @@ class ConnectPointList:
                 if prev_cable:
                     prev_cable.assign_cable(cable)
                 prev_cable = cable
+
+            # if the port exist (which means signal is used in this port)
+            # Create assignement statement fo the signal
+            signal_net = prev_cable
             if prev_cable and port:
                 prev_cable.assign_cable(next(port.get_cables()))
+                signal_net = next(port.get_cables())
 
             prev_cable = None
-            for outp in [k for k, v in values.get("out", {}).items() if v > 0]:
+            # rotate clockwise and create output connections
+            for outp in [k for k, v in values.get("out", {}).items() if v > 0][::-1]:
                 module.create_port(f"{port_name}_{outp}_out",
                                    pins=cable.size, direction=sdn.OUT)
                 cable = module.create_cable(f"{port_name}_{outp}_out",
                                             wires=cable.size)
                 if prev_cable:
-                    prev_cable.assign_cable(cable)
+                    cable.assign_cable(prev_cable)
                 prev_cable = cable
-            if prev_cable and port:
-                next(port.get_cables()).assign_cable(prev_cable)
+            if prev_cable:
+                signal_net.assign_cable(prev_cable)
             if port:
                 module.remove_port(port)
 
     def create_ft_connection(self, netlist: sdn.Netlist, signal_cable: sdn.Instance,
-                             down_port=None, up_port=None):
+                             down_port=None, up_port=None, top_cable=None):
         ''' Performs top level connection using connection file
 
         Args:
@@ -414,7 +464,13 @@ class ConnectPointList:
             if point.level == "up":
                 continue
             w = cable.create_wire()
-            if 0 in point.from_connection:
+            if point.level == "top":
+                top_cable.assign_cable(cable, 
+                upper=len(cable.wires), 
+                lower=len(cable.wires)-1)
+            elif (0 in point.from_connection) or \
+                (self.sizex+1 == point.from_connection[0]) or \
+                    (self.sizey+1 == point.from_connection[1]):
                 signal_cable.assign_cable(cable,
                                           upper=w.get_index,
                                           lower=w.get_index)
@@ -423,15 +479,20 @@ class ConnectPointList:
                 port_name = f"{signal}_{point.from_dir}_out"
                 w.connect_pin(next(inst.get_port_pins(port_name)))
 
-            if 0 in point.to_connection:
+            if 0 in point.to_connection or \
+                    (self.sizex+1 == point.to_connection[0]) or \
+                    (self.sizey+1 == point.to_connection[1]):
                 signal_cable.assign_cable(
                     cable, upper=w.get_index, lower=w.get_index)
             else:
                 inst = self.get_top_instance(netlist, *point.to_connection)
                 port_name = {
                     "same": f"{signal}_{point.to_dir}_in",
+                    "top": f"{signal}_{point.to_dir}_in",
                     "down": f"{down_port}_{point.to_dir}_in"}[point.level]
                 w.connect_pin(next(inst.get_port_pins(port_name)))
+        if not len(cable.wires):
+            netlist.top_instance.reference.remove_cable(cable)
 
     def print_instance_grid_map(self):
         """ Prints mapping beetween grid cordinates and top level instances """

@@ -1,9 +1,9 @@
 # ##############################################################################
 # Tool: OpenFPGA-Physical
-# Script: fpga_grid_gen.py
+# Script: FPGAGridGen.py
 ################################################################################
 '''
-fpga_grid_gen
+FPGAGridGen
 -------------
 
 This scripts read the layout section of the VPR architecture file and 
@@ -33,8 +33,8 @@ def main() -> None:
     Execute when this file called as a script
     """
     args = parse_argument()
-    grid = fpga_grid_gen(args.design_name, args.arch_file,
-                         args.layout, args.release_root)
+    grid = FPGAGridGen(args.design_name, args.arch_file,
+                       args.layout, args.release_root)
     grid.enumerate_grid()
     grid.print_grid()
 
@@ -56,13 +56,13 @@ def parse_argument() -> argparse.Namespace:
     return parser.parse_args()
 
 
-class fpga_grid_gen():
+class FPGAGridGen():
     '''
     This class generates the 2D matrix of the FPGA grid.
 
     **Example**:
 
-        python3.8 fpga_grid_gen.py **--design_name** FPGA66_flex
+        python3.8 FPGAGridGen.py **--design_name** FPGA66_flex
         **--layout** dp
         **--arch_file** example_files/vpr_arch_render_demo.xml
 
@@ -94,8 +94,7 @@ class fpga_grid_gen():
         self.fpga_arch = OpenFPGA_Arch(arch_file, None, layout=layout)
         # Parse values
         self.clb = None
-        self.arch_tree = ET.parse(arch_file)
-        self.root = self.arch_tree.getroot()
+        self.root = self.fpga_arch.vpr_arch
         self.layout = self.root.find(f".//fixed_layout[@name='{layout}']")
         assert layout, "Specified layout not found in the architecture file"
         self.width = self.fpga_arch.width
@@ -128,11 +127,22 @@ class fpga_grid_gen():
                 print(f"{y:^10}", end=" ")
             print("")
 
+    def validate_grid(self):
+        '''
+        Checks for the correctness of the grid
+            - if right and up arrows are placed correctly in the grid 
+            - if the boundry blocks has correct grid value
+        '''
+        pass
+
     def get_block(self, x, y):
         '''
         This method returns the module present in specific x and y
         cordinate. The return value contains module name and 
         adjusted X and Y cordianates
+
+        the cordiante origin starts from the first element of top most list 
+        and first element of the first element of list of list
         '''
         value = self.grid[y][x]
         while value in [self.RIGHT_ARROW, self.UP_ARROW]:
@@ -140,7 +150,8 @@ class fpga_grid_gen():
                 y -= 1
             if value == self.RIGHT_ARROW:
                 x -= 1
-            if x < 1 and y < 1:
+            if x < 0 and y < 0:
+                x, y = 0, 0
                 break
             value = self.grid[y][x]
         return value, x, y
@@ -252,6 +263,36 @@ class fpga_grid_gen():
                     for y in range(starty, endy, incry):
                         self._set_value(xstep+x, ystep+y,
                                         ele_type, ele_w, ele_h)
+
+    def get_top_instance(self, x, y):
+        """
+        This method generates the grid instance information given the 
+        cordinate points 
+        """
+        if 0 in (x, y) or ((self.height*2)-2 == y) or ((self.width*2)-2 == x):
+            return "top"
+        if (x % 2 == 0) and (y % 2 == 0):
+            grid_lbl = self.get_block(int(x/2), int(y/2))
+            return "%s_%d__%d_" % grid_lbl
+        module = {
+            True: "sb",
+            (x % 2 == 1) and (y % 2 == 0): "cby",
+            (x % 2 == 0) and (y % 2 == 1): "cbx"}[True]
+        xi, yi = int(x/2), int(y/2)
+        # TODO : Square modules are not supported yet
+        # if module == "sb":
+        #     if self.grid[yi+1][xi+1] == self.UP_ARROW:
+        #         grid_lbl = self.get_block(xi, yi)
+        #         return "%s_%d__%d_" % grid_lbl
+        if module == "cby":
+            if self.grid[yi][xi+1] in [self.RIGHT_ARROW]:
+                grid_lbl = self.get_block(xi, yi)
+                return "%s_%d__%d_" % grid_lbl
+        if module == "cbx":
+            if self.grid[yi+1][xi] in [self.UP_ARROW]:
+                grid_lbl = self.get_block(xi, yi)
+                return "%s_%d__%d_" % grid_lbl
+        return f"{module}_{int(x/2)}__{int(y/2)}_"
 
     def enumerate_grid(self):
         '''

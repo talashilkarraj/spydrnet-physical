@@ -2,12 +2,13 @@
 import logging
 import typing
 from itertools import combinations
-
+import numpy as np
 import spydrnet as sdn
 from spydrnet.ir import Definition as DefinitionBase
 from spydrnet.ir.innerpin import InnerPin
 from spydrnet.ir.outerpin import OuterPin
 from spydrnet.ir.port import Port
+
 
 logger = logging.getLogger('spydrnet_logs')
 try:
@@ -34,6 +35,49 @@ class Definition(DefinitionBase):
         properties = properties or dict()
         self.properties["WIDTH"] = properties.get("WIDTH", 50)
         self.properties["HEIGHT"] = properties.get("WIDTH", 50)
+
+    @staticmethod
+    def get_custom_boundary(points):
+        path = points.split()
+        direction = path[0].lower()
+        origin = path[1:3]
+        boundary = [int(origin[0]), int(origin[1])]
+        for pt in map(int, map(float, path[3:])):
+            if direction == 'v':
+                # print("v")
+                boundary.extend([boundary[-2], boundary[-1]+pt])
+                direction = 'h'
+            else:
+                # print("h")
+                boundary.extend([boundary[-2]+pt, boundary[-1]])
+                direction = 'v'
+            # print(boundary)
+        return boundary
+
+    @staticmethod
+    def PolyArea2D(pts):
+        pts = list(zip(pts[::2], pts[1::2]))
+        lines = np.hstack([pts, np.roll(pts, -1, axis=0)])
+        area = 0.5*abs(sum(x1*y2-x2*y1 for x1, y1, x2, y2 in lines))
+        return area
+
+    @property
+    def area(self):
+        shape = self.data["VERILOG.InlineConstraints"].get("SHAPE", None)
+        if shape == "cross":
+            a, b, c, d, e, f = \
+                self.data["VERILOG.InlineConstraints"].get(
+                    "POINTS", [0, 0, 0, 0, 0, 0])
+            return ((a+f+c) * d) + ((b+d+e) * a) - (d*a)
+        elif shape == "custom":
+            return self.PolyArea2D(self.get_custom_boundary(
+                self.data["VERILOG.InlineConstraints"].get("POINTS",
+                                                           [0, 0, 0, 0, 0, 0])
+            ))
+        else:
+            W = self.data["VERILOG.InlineConstraints"].get("WIDTH", 0)
+            H = self.data["VERILOG.InlineConstraints"].get("HEIGHT", 0)
+            return W*H
 
     def _disconnect_port(self, port):
         '''
@@ -606,9 +650,13 @@ class Definition(DefinitionBase):
             assert self == p.definition, \
                 f"all ports to combine should belong to same definition"
 
-        new_port = self.create_port(port_name, direction=direction)
-        new_cable = self.create_cable(port_name, is_scalar=new_port.is_scalar)
+        new_port = self.create_port(port_name, direction=direction,
+                                    is_downto=False)
+        new_cable = self.create_cable(port_name, is_scalar=new_port.is_scalar,
+                                      is_downto=False)
+        port_list = []
         for p in ports:
+            port_list.append(p.name)
             newPin = new_port.create_pin()
             pp = p.pins[0]
             ppWire = pp.wire
@@ -626,6 +674,7 @@ class Definition(DefinitionBase):
             self.remove_port(p)
         logger.debug(f"Combined with {new_port.name} " +
                      f"created cable {new_cable.name}")
+        logger.debug(f"{new_port.name} <- {port_list}")
         return new_port, new_cable
 
     def create_unconn_wires(self):
@@ -783,6 +832,21 @@ class Definition(DefinitionBase):
         for pin in list(child.get_port_pins(child.get_ports())):
             if pin.wire:
                 pin.wire.disconnect_pin(pin)
+
+    def make_instance_unique(self, instance, new_name):
+        """clone the definition and point the reference to the new definition"""
+        assert instance in self.children, \
+            "Isntance is not part of this definition"
+        reference = instance.reference
+        lib = instance.reference.library
+        index = lib.definitions.index(reference)
+        new_def = instance.reference.clone()
+        if instance.reference.name is not None:
+            name = instance.reference.name
+            new_def.name = new_name or (name + '_new')
+        lib.add_definition(new_def, index + 1)
+        instance.reference = new_def
+        return new_def
 
     # def sanity_check_cables(self):
     #     allWires = list(self.get_wires())
